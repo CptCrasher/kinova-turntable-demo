@@ -18,6 +18,8 @@ setup(
     license='MIT',
     entry_points={
         'console_scripts': [
+            'vision_timer = turntable_pick.vision_camera:main',
+            'vision_pick = turntable_pick.vision_pick:main',
             'pick = turntable_pick.pick:main',
         ],
     },
