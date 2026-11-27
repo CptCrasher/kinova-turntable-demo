@@ -1,19 +1,22 @@
-# Kinova Gen3 — Rotating Turntable Pickup
+# Kinova Gen3 - Rotating Turntable Pickup
 
 A Kinova Gen3 picks up a block from a **continuously rotating turntable**. There are **two independent ways to time the same recorded robot movements**:
 
-1. **AprilTag camera (main version):** an overhead camera sees the tag on the block, measures full revolutions, and predicts when the tag will reach PICK.
-2. **Arduino Hall sensor (backup version):** a magnet triggers a KY-024 sensor once per revolution; the program uses a timed offset to predict PICK.
+1. **AprilTag camera (this is the main version):** an overhead camera sees the tag on the block, measures full revolutions, and predicts when the tag will reach PICK.
+2. **Arduino Hall sensor (backup version):** a magnet triggers a KY-024 linear hall effect sensor once per revolution; the program uses a timed offset to predict PICK.
 
-**These are one-shot, timed pickups—not real-time visual servoing or collision avoidance.** The arm moves to fixed poses, closes the gripper, lifts, and stays at EXIT. It does not return HOME or drop the block. Always verify clearance and have the physical E-stop accessible. A ROS timeout or Ctrl+C is **not** a robot emergency stop.
+**NOTE: These are timed pickups...not real-time visual servoing or collision avoidance.** I'm primairly doing this as a HW demo, our gazebo simulation uses proper prediction methods. 
+
+The Kinova arm goes thorugh the following poses when picking up an object:
+ABOVE->MID->PICK->LIFT->EXIT
 
 ---
 
-# Part 1 — AprilTag camera version (recommended)
+# Part 1 - AprilTag camera version (recommended)
 
-## 1. Set up after cloning on `rob05`
+## 1. Set up after cloning on `rob0X`
+ The Kinova driver/service server is in a **separate workspace**: `~/kinova/kinova_ws`.
 
-This project uses **ROS 2 Humble** and the lab's existing Kinova ROS 2 services. The Kinova driver/service server is in a **separate workspace**: `~/kinova/kinova_ws`.
 
 ```bash
 cd ~/kinova-turntable-demo/ros2_ws
@@ -23,7 +26,7 @@ source /opt/ros/humble/setup.bash
 source ~/kinova/kinova_ws/install/setup.bash
 
 # Build this project
-colcon build --symlink-install --packages-select turntable_pick
+colcon build
 source install/setup.bash
 
 # Confirm the three commands exist
@@ -38,25 +41,20 @@ turntable_pick vision_timer   # Camera only, no arm motion
 turntable_pick vision_pick    # Camera-timed Kinova movements
 ```
 
-**If `vision_timer` or `vision_pick` is missing:** make sure `vision_camera.py`, `vision_pick.py`, and the corresponding entries in `ros2_ws/src/turntable_pick/setup.py` were committed and pulled; then rebuild. The AprilTag add-on does **not** replace `pick.py`.
-
 ### Python and camera dependencies
 
-On the computer **with the camera attached**, check:
+On the computer **with the camera pluged in**, check:
 
 ```bash
 python3 -c "import cv2, numpy; print('OpenCV:', cv2.__version__, 'AprilTags:', hasattr(cv2, 'aruco'))"
 ```
 
-If those modules are unavailable, install `opencv-contrib-python` and `numpy` for the **same Python** that runs ROS 2, using your lab's approved install method. For example, if user-site pip installs are permitted:
+If those modules are unavailable, install them (most likely `opencv-contrib-python` and `numpy`) for the same Python version. 
 
+IF IT DOESNT EXIST:
 ```bash
 python3 -m pip install --user opencv-contrib-python numpy
 ```
-
-Avoid mixing incompatible versions of system OpenCV and pip OpenCV. Verify `python3 -c "import cv2; print(hasattr(cv2.aruco, 'DICT_APRILTAG_36h11'))"` afterward. ROS 2 and OpenCV must be importable in the same environment; a plain virtual environment may hide the system ROS packages.
-
-**Important:** The overhead USB camera must be accessible from the machine running `vision_timer` / `vision_pick` (ideally `rob05`). If connected only to a personal laptop, `rob05` cannot automatically access it. An SSH-only session may also lack a graphical display for the OpenCV camera window.
 
 For **each new terminal** after building, source in this order:
 
@@ -69,10 +67,9 @@ source ~/kinova-turntable-demo/ros2_ws/install/setup.bash
 ## 2. Prepare the physical setup
 
 1. Mount the camera **above the turntable**, pointed roughly straight down. Keep it fixed throughout the run.
-2. Print **AprilTag family 36h11, ID 0**, and attach it flat to the block's top surface. The project used a **23 mm × 23 mm** tag.
-3. Ensure the whole path of the tag is visible, in focus, and well lit.
-4. Put the turntable in its **repeatable, calibrated position** under the Kinova. Do not guess that the recorded PICK pose matches a newly moved turntable.
-5. Start the turntable spinning. Its observed period has been approximately **30.1 seconds/revolution** (~1.99 RPM).
+2. Attach printed AprilTag 36h11 ID 0 to top surface of object being picked up. I'm using a 23mm x23mm tag for this demo. (tag should be entirely visible for the entire path of platform)
+4. Put the turntable in its **repeatable, calibrated position** under the Kinova. Do not guess that the recorded PICK pose matches a newly moved turntable (mark with tape/marker).
+5. Start the turntable spinning. Its observed period has been approximately **30.1 seconds/revolution** (~1.99 RPM). To get the Table spinning, Upload the `arduino/turntable_hall.ino` to the arduino and ensure pins what comments dictate.
 
 ## 3. Test the camera without moving the robot
 
@@ -98,13 +95,9 @@ Measured full-revolution period: ~30.1 s
 Previous prediction error: ... s
 ```
 
-**What does `--lead 17` mean?** It tells the *camera-only viewer* to print **START ARM NOW 17 seconds before its predicted PICK crossing**. It does **not** change the block speed, improve camera accuracy, or control the Kinova. In `vision_pick`, the equivalent movement parameter is `approach_lead_s` (see below).
+## 4. Start the lab's Kinova service
 
-Look for stable measured revolutions and prediction errors close to zero. If errors are consistently large, **fix the camera tracking/calibration**, not the `--lead` number. Changing the camera position or resolution invalidates the saved pixel coordinates; press `r` and recalibrate. Do not blindly reuse your personal-laptop `vision_calibration.json` on `rob05`.
-
-## 4. Start the lab's Kinova ROS service server
-
-In a **separate terminal** on `rob05`, source the lab Kinova workspace and launch the course's normal Kinova service server (the exact executable depends on the lab setup):
+In a **separate terminal**:
 
 ```bash
 source /opt/ros/humble/setup.bash
@@ -120,8 +113,6 @@ In your turntable terminal, verify the services:
 ros2 service list -t | grep -E '/home|/set_tool|/get_tool|/set_gripper|/get_gripper'
 ros2 service call /get_tool kinova_gen3_interfaces/srv/GetTool '{}'
 ```
-
-The controller uses the **course's custom `kinova_gen3_interfaces` services**. Do not substitute a generic Kortex service command.
 
 ## 5. Run the camera-timed robot sequence
 
@@ -141,7 +132,7 @@ ros2 run turntable_pick vision_pick --ros-args \
 
 The program observes **at least 3 camera PICK crossings**, measures the period, and schedules one pickup. Because `execute` defaults to `false`, the printed poses and gripper commands are **only a preview**. `vision_pick` uses the camera's PICK crossing directly; **`pickup_delay_s` is Hall-only and does not shift camera timing**.
 
-**B. Next: upper-arm-only motion (real robot; no descent or grip)**
+**B. 
 
 With the block removed, use a **flat, low-profile AprilTag marker on the turntable at the same radius** so the camera can still track it. Confirm that the moving turntable clears the upper robot trajectory.
 
@@ -156,14 +147,20 @@ ros2 run turntable_pick vision_pick --ros-args \
   -p pick_lead_s:=6.5 \
   -p grip_advance_s:=4.5
 ```
-
-Type `RUN` at the confirmation prompt. It homes, moves to ABOVE, waits for the scheduled pickup time, then goes to EXIT. **It will not descend or close the gripper.**
-
-**C. Full motion / gripping: only after clearance and gripping tests**
-
-After verifying stationary grasps and an empty-gripper descent with a clear turntable, the full motion command is the preview command above with **`-p execute:=true`** added. This enables HOME → OPEN → ABOVE → MID → PICK → CLOSE → LIFT → EXIT.
-
-**CAUTION:** The previously used `grip_settle_s:=3.0` lets the fingers finish closing in stationary tests, but the block keeps rotating during that wait. **Do not assume a 3-second hold at fixed PICK is safe for a spinning-block grasp**: the block can be dragged or jammed. Establish a safe grasp-to-lift time and clearance before attempting a live pickup. The camera stops tracking once it has provided the one-shot reference; losing the block later does not automatically halt the arm.
+change execute to actually drive robot
+```bash
+ros2 run turntable_pick vision_pick \
+  --ros-args \
+  -p camera_index:=0 \
+  -p vision_calibration:=vision_calibration.json \
+  -p approach_lead_s:=17.0 \
+  -p mid_lead_s:=8.0 \
+  -p pick_lead_s:=3.0 \
+  -p grip_advance_s:=0.5 \
+  -p grip_settle_s:=3.0 \
+  -p include_pick:=true \
+  -p include_gripper:=true
+```
 
 ## 6. Robot positions and movement timing
 
@@ -216,7 +213,7 @@ Required ordering: `approach_lead_s > mid_lead_s > pick_lead_s > grip_advance_s 
 ---
 ---
 
-# Part 2 — Arduino Hall-effect sensor version (backup)
+# Part 2 - Arduino Hall-effect sensor version (backup)
 
 This version uses the **same Kinova poses and movement code**, but gets its timing reference from an **Arduino + KY-024 Hall sensor** instead of the camera.
 
@@ -370,40 +367,4 @@ The script uses hardcoded `GRIP_CLOSED = 0.92`; changing `grip_settle_s` does no
 ros2 service call /get_gripper kinova_gen3_interfaces/srv/GetGripper '{}'
 ```
 
-## 5. Hall fallback modes / common problems
 
-**Manual reference (if Arduino serial isn't accessible):**
-
-```bash
-ros2 run turntable_pick pick --ros-args \
-  -p manual_hall:=true \
-  -p manual_period_s:=30.14 \
-  -p pickup_delay_s:=12.5
-```
-
-The program asks you to press Enter as the magnet passes the sensor mark. This is less precise because of human reaction time. Leave `execute` at its default `false` for the first test. An optional `udp_hall` mode also exists for forwarding real REF messages from another machine, but requires network access and a separate forwarding script.
-
-**Troubleshooting:**
-
-- `Permission denied` on `/dev/ttyACM0`: check `groups`, `ls -l`, admin-provided `dialout`, and fresh login.
-- `ModuleNotFoundError: serial`: install **pyserial** for the Python environment running ROS.
-- `No two Hall references received`: inspect the Arduino at 115200 baud; check magnet position, sensor sensitivity, port and power.
-- Camera can't open: check `/dev/video*`, webcam connection, camera index and GUI/display availability.
-- Vision prediction error is high: improve lighting and focus; recalibrate center/PICK; ensure the tag stays visible; compare **measured full-revolution** periods rather than adjusting `--lead` blindly.
-- Robot stops at `Missed mid` / `Missed pick`: a previous move took longer than the available lead interval. Re-measure movement durations; schedule it earlier instead of increasing `max_late_s` blindly.
-- `STOPPED` or Ctrl+C: **does not guarantee that already-commanded physical motion has stopped**. Use the robot's actual safety controls.
-
----
-
-## Git: update the repository README
-
-From your **Windows PowerShell** project folder after placing this file at the repository root:
-
-```powershell
-cd X:\EECS4421\PROJECTDEMO\kinova-turntable-demo
-git add README.md
-git commit -m "Rewrite setup guide for vision and Hall pickup"
-git push
-```
-
-On `rob05`, retrieve the updated guide and source files with `cd ~/kinova-turntable-demo && git pull`.
